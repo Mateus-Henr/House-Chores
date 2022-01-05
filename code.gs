@@ -8,15 +8,20 @@ const JOAO = "João";
 
 const WEEKLY_TASK = "Wash the toilet";
 
+// Values of the days when using "Date.getDay()"
+const SUNDAY = 0;
+const SATURDAY = 6;
+
 // Indexes of sheet's data.
 const CHECKBOX_INDEX = 0;
 const DATE_INDEX = 1;
 const TASK_INDEX = 2;
 const PERSON_INDEX = 3;
 
-var MORNING_TIME = createTime(06, 30, 00);
-var EVENING_TIME = createTime(12, 00, 00);
-var NIGHT_TIME = createTime(18, 00, 00);
+// Times for when to create the events.
+var MORNING_TIME = createTime(06, 40, 00);
+var EVENING_TIME = createTime(12, 40, 00);
+var NIGHT_TIME = createTime(18, 40, 00);
 
 var START_DAY_TIME = createTime(00, 00, 00);
 var END_DAY_TIME = createTime(23, 59, 59);
@@ -45,7 +50,7 @@ function checkIfAllTasksAreCompleted()
     var isCompleted = tasksData[i][CHECKBOX_INDEX];
     var taskTime = new Date(tasksData[i][DATE_INDEX]);
 
-    if (!isCompleted && checkIfTaskIsDueToToday(taskTime))
+    if (!isCompleted && isTaskDueToToday(taskTime))
     {
       getInformationFromSheet();
       return;
@@ -53,17 +58,6 @@ function checkIfAllTasksAreCompleted()
   }
 
   Logger.log("All events completed.");
-}
-
-
-/*
- * Creates a specific Date object with the time defined by given parameters.
- */
-function createTime(hours, minutes, seconds)
-{
-  var now = new Date();
-
-  return new Date(now.getFullYear(), now.getMonth(), now.getDate(), hours, minutes, seconds, 00);
 }
 
 
@@ -81,7 +75,7 @@ function getInformationFromSheet()
     var taskTitle = tasksData[i][TASK_INDEX];
     var taskPerson = tasksData[i][PERSON_INDEX];
 
-    if (taskTitle && !isCompleted && checkIfTaskIsDueToToday(taskDate))
+    if (taskTitle && !isCompleted && isTaskDueToToday(taskDate) && !isCurrentDayAWeekend())
     {
       switch (taskPerson)
       {
@@ -102,30 +96,12 @@ function getInformationFromSheet()
   }
 }
 
-/*
- * Checks if the task's date is the same as today's date.
- */
-function checkIfTaskIsDueToToday(taskTimeString)
-{
-  var taskTime = new Date(taskTimeString);
-
-  if (!taskTime)
-  {
-    Logger.log("Invalid date!");
-    return false;
-  }
-
-  var now = new Date();
-
-  var taskDate = taskTime.getDate() + "/" + taskTime.getMonth() + "/" + taskTime.getFullYear();
-  var todaysDate = now.getDate() + "/" + now.getMonth() + "/" + now.getFullYear();
-
-  return taskDate == todaysDate;
-}
-
 
 /*
  * Writes the event on the calendar.
+ *
+ * @param   event       a variable with the Calendar ID associated with a specific person.
+ * @param   taskTitle   a title for the task.
  */
 function writeEvent(event, taskTitle)
 {
@@ -141,7 +117,7 @@ function writeEvent(event, taskTitle)
   {
     if (hoursNow < MORNING_TIME.getHours())
     {
-      if (!checkIfEventExists(event, taskTitle, MORNING_TIME))
+      if (!eventExists(event, taskTitle, MORNING_TIME))
       {
         event.createEvent(taskTitle, MORNING_TIME, MORNING_TIME);
         Logger.log("Morning event created at " + MORNING_TIME);
@@ -149,7 +125,7 @@ function writeEvent(event, taskTitle)
     }
     else if (hoursNow < EVENING_TIME.getHours())
     {
-      if (!checkIfEventExists(event, taskTitle, EVENING_TIME))
+      if (!eventExists(event, taskTitle, EVENING_TIME))
       {
         deletePreviousEvent(event, taskTitle);
 
@@ -159,7 +135,7 @@ function writeEvent(event, taskTitle)
     }
     else if (hoursNow < NIGHT_TIME.getHours())
     {
-      if (!checkIfEventExists(event, taskTitle, NIGHT_TIME))
+      if (!eventExists(event, taskTitle, NIGHT_TIME))
       {
         deletePreviousEvent(event, taskTitle);
 
@@ -180,26 +156,10 @@ function writeEvent(event, taskTitle)
 
 
 /*
- * Checks if the event from the given parameters already exists.
- */
-function checkIfEventExists(event, taskTitle, time)
-{
-  var events = event.getEvents(START_DAY_TIME, END_DAY_TIME);
-
-  for (var i = 0; i < events.length; i++)
-  {
-    if (events[i].getTitle() == taskTitle && events[i].getStartTime().getHours() == time.getHours())
-    {
-      return true;
-    }
-  }
-
-  return false;
-}
-
-
-/*
- * Deletes any previous events on the current day with the data equal to the given parameters.
+ * Deletes any previous events on the current day with the title equal to the given parameter.
+ * 
+ * @param   event       a variable with the Calendar ID associated with a specific person.
+ * @param   taskTitle   a title for the task.
  */
 function deletePreviousEvent(event, taskTitle)
 {
@@ -229,7 +189,10 @@ function deletePreviousEvent(event, taskTitle)
 
 
 /*
- * Sets all the checkboxes in spreadsheet to false and updates the dates for the tasks.
+ * Cleans things up for the next day. It unchecks all the checkboxes and updates the dates
+ * according to when the tasks should be done next time.
+ * This method is considered expensive, since it alters data in the sheet itself, because of
+ * that it should only be used at the end of the day.
  */
 function cleanup()
 {
@@ -252,7 +215,7 @@ function cleanup()
       isCheckedCell.setValue(false);
     }
 
-    if (checkIfTaskIsDueToToday(taskDate))
+    if (isTaskDueToToday(taskDate))
     {
       if (taskTitle == WEEKLY_TASK)
       {
@@ -287,7 +250,33 @@ function cleanup()
 
 
 /*
+ * Creates a customized Date object with the given parameters.
+ * If any parameters don't follow the time format (hours between 0 and 24, and minutes and seconds between 0 and 60),
+ * this method will return null to avoid exceptions.
+ * 
+ * 
+ * @param  hours    a number in hours.
+ * @param  minutes  a number in minutes.
+ * @param  seconds  a number in seconds.
+ * @return          the Date object with specific values for the time.
+ */
+function createTime(hours, minutes, seconds)
+{
+  if (hours < 0 || hours > 24 || minutes < 0 || minutes > 60 || seconds < 0 || seconds > 60)
+  {
+    return null;
+  }
+
+  var now = new Date();
+
+  return new Date(now.getFullYear(), now.getMonth(), now.getDate(), hours, minutes, seconds, 00);
+}
+
+
+/*
  * Get the number of rows that contain tasks.
+ * 
+ * @return  the row number of the last task in the sheet.
  */
 function getPositionOfLastTask()
 {
@@ -300,4 +289,79 @@ function getPositionOfLastTask()
 
   // Subtracting 1 because arrays are zero based.
   return i - 1;
+}
+
+
+/*
+ * Checks if the task's date is the same as today's date.
+ * 
+ * @param   taskTimeString  a string in the Date format.
+ * @return                  a boolean value indicating if the task's date is equal to today's date.
+ */
+function isTaskDueToToday(taskTimeString)
+{
+  var taskTime = new Date(taskTimeString);
+
+  if (!taskTime)
+  {
+    Logger.log("Invalid date!");
+    return false;
+  }
+
+  var now = new Date();
+
+  var taskDate = taskTime.getDate() + "/" + taskTime.getMonth() + "/" + taskTime.getFullYear();
+  var todaysDate = now.getDate() + "/" + now.getMonth() + "/" + now.getFullYear();
+
+  return taskDate == todaysDate;
+}
+
+
+/*
+ * Checks if today's day is a weekend.
+ * 
+ * @return   whether today's day is a weekend or not.
+ */
+function isCurrentDayAWeekend()
+{
+  var todaysDay = new Date().getDay();
+
+  if (todaysDay == SUNDAY || todaysDay == SATURDAY)
+  {
+    return true;
+  }
+
+  return false;
+}
+
+
+/*
+ * Checks if the event from the given parameters already exists.
+ * If any errors happen when trying to get the events, it'll return true in order to not
+ * create an event.
+ * 
+ * @param   event       a variable with the Calendar ID associated with a specific person.
+ * @param   taskTitle   a title for the task.
+ * @param   time        a variable of type Date.
+ * @return              whether the event exists in the period of a day in the person's calendar or not.
+ */
+function eventExists(event, taskTitle, time)
+{
+  var events = event.getEvents(START_DAY_TIME, END_DAY_TIME);
+
+  if (!events)
+  {
+    Logger.log("Error trying to retrieve the events.");
+    return true;
+  }
+
+  for (var i = 0; i < events.length; i++)
+  {
+    if (events[i].getTitle() == taskTitle && events[i].getStartTime().getHours() == time.getHours())
+    {
+      return true;
+    }
+  }
+
+  return false;
 }
